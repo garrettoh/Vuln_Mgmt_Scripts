@@ -50,10 +50,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Invoke-SMA1000-IOCChec
 
 Replace the example host with the SMA's address. The script leaves the PowerShell session open and prints the local report path when collection finishes. The remote aggregate script uses `curl -k` for the SMA's reported CA verification error.
 
-To download and run the collector in one PowerShell command, let it prompt for the SMA host:
+To download and run the collector in one PowerShell command, let it prompt for the SMA host. It uses `curl.exe -k` when available; otherwise it falls back to PowerShell web requests with TLS 1.2 enabled:
 
 ```powershell
-$f = Join-Path $env:TEMP 'Invoke-SMA1000-IOCCheck.ps1'; try { curl.exe -kfsSL 'https://raw.githubusercontent.com/garrettoh/Vuln_Mgmt_Scripts/main/Invoke-SMA1000-IOCCheck.ps1' -o $f; if ($LASTEXITCODE -ne 0) { throw 'Collector download failed' }; & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $f } finally { Remove-Item $f -Force -ErrorAction SilentlyContinue }
+$f = Join-Path $env:TEMP 'Invoke-SMA1000-IOCCheck.ps1'; $u = 'https://raw.githubusercontent.com/garrettoh/Vuln_Mgmt_Scripts/main/Invoke-SMA1000-IOCCheck.ps1'; try { if (Get-Command curl.exe -ErrorAction SilentlyContinue) { curl.exe -kfsSL $u -o $f; if ($LASTEXITCODE -ne 0) { throw 'Collector download failed' } } else { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -UseBasicParsing -Uri $u -OutFile $f }; & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $f } finally { Remove-Item $f -Force -ErrorAction SilentlyContinue }
 ```
-
-The downloaded script prompts for the SMA hostname/IP, connects using Windows OpenSSH, prompts for SSH/SCP authentication as needed, runs all four checks, and writes the collected report to `C:\temp\SMA_Log.log`. The PowerShell session stays open after collection. The one-liner uses `curl.exe -k` to bypass this workstation's TLS validation error; use it only over a trusted connection.
+The downloaded script prompts for the SMA hostname/IP, connects using Windows OpenSSH, prompts for SSH/SCP authentication as needed, runs all four checks, and writes the collected report to `C:\temp\SMA_Log.log`. The PowerShell session stays open after collection. When `curl.exe` is present, `-k` bypasses workstation certificate validation; use that path only over a trusted connection. The fallback keeps certificate validation enabled and can still fail if the machine trust store is missing the required CA.
