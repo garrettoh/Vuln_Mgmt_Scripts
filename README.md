@@ -40,7 +40,7 @@ Exit status for an individual script: 0 means no heuristic match, 1 means review
 
 ## Collect the full check from Windows PowerShell
 
-`Invoke-SMA1000-IOCCheck.ps1` uses PuTTY's Plink command-line tool to connect to the SMA and run the aggregate check. It returns the report over the same SSH session, avoiding a second SCP connection. The collector writes the combined report and SSH transcript to `C:\temp\SMA_Log.log` and `C:\temp\SMA_Collection_Session.log`. Plink runs directly in the console so host-key and password prompts remain interactive; PowerShell transcription saves its displayed output. It does not store an SSH password. PuTTY key authentication avoids repeated prompts.
+`Invoke-SMA1000-IOCCheck.ps1` uses PuTTY's Plink command-line tool to connect to the SMA and run the aggregate check. It returns the report over the same SSH session, avoiding a second SCP connection. The collector writes the combined report and SSH session output to `C:\temp\SMA_Log.log` and `C:\temp\SMA_Collection_Session.log`. Plink output is forwarded live to the console and captured to files, keeping host-key and password prompts interactive. It does not store an SSH password. PuTTY key authentication avoids repeated prompts.
 
 From the repository folder, run:
 

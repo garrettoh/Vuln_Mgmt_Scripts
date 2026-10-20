@@ -9,8 +9,70 @@ $logPath = Join-Path $logDirectory "SMA_Log.log"
 $sessionLogPath = Join-Path $logDirectory "SMA_Collection_Session.log"
 
 function Write-LogLine {
-    param([Parameter(Mandatory = $true)][string]$Message)
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Message)
     $Message | Tee-Object -FilePath $logPath -Append
+}
+
+if (-not ("SmaInteractiveProcessRunner" -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Text;
+using System.Threading.Tasks;
+
+public static class SmaInteractiveProcessRunner {
+    private static string Quote(string value) {
+        var result = new StringBuilder("\"");
+        int slashes = 0;
+        foreach (char ch in value) {
+            if (ch == '\\') { slashes++; continue; }
+            if (ch == '"') {
+                result.Append('\\', slashes * 2 + 1).Append('"');
+                slashes = 0;
+                continue;
+            }
+            result.Append('\\', slashes).Append(ch);
+            slashes = 0;
+        }
+        result.Append('\\', slashes * 2).Append('"');
+        return result.ToString();
+    }
+
+    private static void Pump(Stream input, string path, Stream console) {
+        using (var file = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read)) {
+            byte[] buffer = new byte[4096];
+            int count;
+            while ((count = input.Read(buffer, 0, buffer.Length)) > 0) {
+                file.Write(buffer, 0, count);
+                file.Flush();
+                console.Write(buffer, 0, count);
+                console.Flush();
+            }
+        }
+    }
+
+    public static int Run(string executable, string[] arguments, string stdoutPath, string stderrPath) {
+        var info = new ProcessStartInfo();
+        info.FileName = executable;
+        info.Arguments = String.Join(" ", Array.ConvertAll(arguments, Quote));
+        info.UseShellExecute = false;
+        info.CreateNoWindow = false;
+        info.RedirectStandardOutput = true;
+        info.RedirectStandardError = true;
+        info.RedirectStandardInput = false;
+        using (var process = new Process()) {
+            process.StartInfo = info;
+            process.Start();
+            var stdout = Task.Factory.StartNew(() => Pump(process.StandardOutput.BaseStream, stdoutPath, Console.OpenStandardOutput()));
+            var stderr = Task.Factory.StartNew(() => Pump(process.StandardError.BaseStream, stderrPath, Console.OpenStandardError()));
+            process.WaitForExit();
+            Task.WaitAll(stdout, stderr);
+            return process.ExitCode;
+        }
+    }
+}
+'@
 }
 
 if (-not $SmaHost) {
@@ -64,13 +126,16 @@ $remoteCommand = 'BASE_URL="https://raw.githubusercontent.com/garrettoh/Vuln_Mgm
 
 Write-LogLine "Connecting to $target over SSH. Authenticate when prompted."
 Write-LogLine "The SMA will run the aggregate check; curl -k is used as requested."
-Start-Transcript -Path $sessionLogPath -Append | Out-Null
 Write-LogLine "Using PuTTY Plink."
-& $plinkPath -ssh -T -l $SshUser $SmaHost $remoteCommand
-$sshExitCode = $LASTEXITCODE
-Stop-Transcript | Out-Null
-
-$sessionText = Get-Content -Path $sessionLogPath -Raw
+$plinkStdoutPath = Join-Path $env:TEMP ("SMA_Plink_" + [guid]::NewGuid().ToString("N") + ".stdout")
+$plinkStderrPath = Join-Path $env:TEMP ("SMA_Plink_" + [guid]::NewGuid().ToString("N") + ".stderr")
+$plinkArguments = @("-ssh", "-T", "-l", $SshUser, $SmaHost, $remoteCommand)
+$sshExitCode = [SmaInteractiveProcessRunner]::Run($plinkPath, $plinkArguments, $plinkStdoutPath, $plinkStderrPath)
+$stdoutText = [System.IO.File]::ReadAllText($plinkStdoutPath)
+$stderrText = [System.IO.File]::ReadAllText($plinkStderrPath)
+$sessionText = $stdoutText + $stderrText
+[System.IO.File]::AppendAllText($sessionLogPath, $sessionText, (New-Object System.Text.UTF8Encoding($false)))
+Remove-Item -LiteralPath $plinkStdoutPath, $plinkStderrPath -Force -ErrorAction SilentlyContinue
 if ($sessionText -match "__SMAIOC_FETCH_FAILED__") {
     Write-LogLine "ERROR: The SMA could not download the aggregate script."
     Write-LogLine "Session transcript: $sessionLogPath"
