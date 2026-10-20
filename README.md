@@ -21,7 +21,7 @@ Each individual script prints its findings to the SSH terminal and saves the sam
 Use the repository raw URL below after these changes have been pushed. For a pinned script, replace `main` with the published commit hash:
 
 ```sh
-curl -fsSL "https://raw.githubusercontent.com/garrettoh/Vuln_Mgmt_Scripts/main/CVE-2026-102255.sh" -o /tmp/CVE-2026-102255.sh && sh /tmp/CVE-2026-102255.sh; rc=$?; rm -f /tmp/CVE-2026-102255.sh; exit $rc
+curl -kfsSL "https://raw.githubusercontent.com/garrettoh/Vuln_Mgmt_Scripts/main/CVE-2026-102255.sh" -o /tmp/CVE-2026-102255.sh && sh /tmp/CVE-2026-102255.sh; rc=$?; rm -f /tmp/CVE-2026-102255.sh; exit $rc
 ```
 
 Change the filename to the desired CVE. The temporary-file method avoids piping a failed or incomplete download into the shell. The script writes findings to the SSH terminal and to its own uniquely named output file under `/tmp`.
@@ -31,9 +31,9 @@ Change the filename to the desired CVE. The temporary-file method avoids piping 
 Set `BASE_URL` to the pinned raw repository directory, then download and run the aggregate script:
 
 ```sh
-export BASE_URL="https://raw.githubusercontent.com/garrettoh/Vuln_Mgmt_Scripts/main"; curl -fsSL "$BASE_URL/IOC_CVE-2026-102255-8.sh" -o /tmp/IOC_CVE-2026-102255-8.sh && sh /tmp/IOC_CVE-2026-102255-8.sh; rc=$?; rm -f /tmp/IOC_CVE-2026-102255-8.sh; exit $rc
+export BASE_URL="https://raw.githubusercontent.com/garrettoh/Vuln_Mgmt_Scripts/main"; curl -kfsSL "$BASE_URL/IOC_CVE-2026-102255-8.sh" -o /tmp/IOC_CVE-2026-102255-8.sh && sh /tmp/IOC_CVE-2026-102255-8.sh; rc=$?; rm -f /tmp/IOC_CVE-2026-102255-8.sh; exit $rc
 ```
 
-The aggregate runner downloads each individual script from `BASE_URL`, prints each output and a summary to the SSH terminal, and saves the combined transcript under `/tmp/SMA1000-IOC-results.*/results.txt`. The individual result files are also retained. It exits 0 (no heuristic leads), 1 (at least one CVE had leads), or 2 (one or more checks failed). Set `BASE_URL` to a trusted pinned URL for repeatable operational use. The raw `main` URL will work after these changes are pushed.
+The aggregate runner downloads each individual script from `BASE_URL` with `curl -k`, prints each output and a summary to the SSH terminal, and saves the combined transcript under `/tmp/SMA1000-IOC-results.*/results.txt`. The individual result files are also retained. It exits 0 (no heuristic leads), 1 (at least one CVE had leads), or 2 (one or more checks failed). Set `BASE_URL` to a trusted pinned URL for repeatable operational use. `-k` disables TLS certificate verification to work around the SMA CA error; use it only on a trusted connection.
 
 Exit status for an individual script: 0 means no heuristic match, 1 means review leads found, and 2 means not run as root. Output clarifies that no matches does not establish the appliance is clean.
