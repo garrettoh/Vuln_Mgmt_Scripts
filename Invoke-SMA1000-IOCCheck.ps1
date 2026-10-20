@@ -24,7 +24,6 @@ if (-not $SshUser) {
 }
 
 $plinkPath = (Get-Command plink.exe -ErrorAction SilentlyContinue).Source
-$pscpPath = (Get-Command pscp.exe -ErrorAction SilentlyContinue).Source
 $puttyDirectories = @()
 if ($env:ProgramFiles) { $puttyDirectories += (Join-Path $env:ProgramFiles "PuTTY") }
 if (${env:ProgramFiles(x86)}) { $puttyDirectories += (Join-Path ${env:ProgramFiles(x86)} "PuTTY") }
@@ -33,35 +32,26 @@ foreach ($directory in $puttyDirectories) {
         $candidate = Join-Path $directory "plink.exe"
         if (Test-Path -LiteralPath $candidate) { $plinkPath = $candidate }
     }
-    if (-not $pscpPath) {
-        $candidate = Join-Path $directory "pscp.exe"
-        if (Test-Path -LiteralPath $candidate) { $pscpPath = $candidate }
-    }
 }
-if (-not ($plinkPath -and $pscpPath)) {
-    Write-Host "PuTTY command-line tools Plink and PSCP are required for this collector."
+if (-not $plinkPath) {
+    Write-Host "PuTTY Plink is required for this collector."
     $installChoice = Read-Host "Install PuTTY using winget now? (Y/N)"
     if ($installChoice.Trim().ToUpperInvariant() -ne "Y") {
-        throw "Collector cancelled. Install PuTTY with Plink and PSCP, then rerun the collector."
+        throw "Collector cancelled. Install PuTTY with Plink, then rerun the collector."
     }
     $winget = Get-Command winget.exe -ErrorAction SilentlyContinue
-    if (-not $winget) { throw "winget was not found. Install PuTTY including Plink and PSCP, then rerun the collector." }
+    if (-not $winget) { throw "winget was not found. Install PuTTY including Plink, then rerun the collector." }
     & $winget.Source install --id PuTTY.PuTTY --exact --accept-source-agreements --accept-package-agreements
     if ($LASTEXITCODE -ne 0) { throw "winget could not install PuTTY (exit $LASTEXITCODE). Install PuTTY, then rerun the collector." }
     $plinkPath = (Get-Command plink.exe -ErrorAction SilentlyContinue).Source
-    $pscpPath = (Get-Command pscp.exe -ErrorAction SilentlyContinue).Source
     foreach ($directory in $puttyDirectories) {
         if (-not $plinkPath) {
             $candidate = Join-Path $directory "plink.exe"
             if (Test-Path -LiteralPath $candidate) { $plinkPath = $candidate }
         }
-        if (-not $pscpPath) {
-            $candidate = Join-Path $directory "pscp.exe"
-            if (Test-Path -LiteralPath $candidate) { $pscpPath = $candidate }
-        }
     }
-    if (-not ($plinkPath -and $pscpPath)) {
-        throw "PuTTY installation completed, but Plink/PSCP are not available. Restart PowerShell and rerun the collector."
+    if (-not $plinkPath) {
+        throw "PuTTY installation completed, but Plink is not available. Restart PowerShell and rerun the collector."
     }
 }
 
@@ -70,7 +60,7 @@ Set-Content -Path $logPath -Value "SMA 1000 IOC collection started: $(Get-Date -
 Set-Content -Path $sessionLogPath -Value "SSH collection session for $SshUser@$SmaHost"
 
 $target = "$SshUser@$SmaHost"
-$remoteCommand = 'BASE_URL="https://raw.githubusercontent.com/garrettoh/Vuln_Mgmt_Scripts/main"; FETCH=/tmp/IOC_CVE-2026-102255-8.sh; if ! curl -kfsSL "$BASE_URL/IOC_CVE-2026-102255-8.sh" -o "$FETCH"; then echo "__SMAIOC_FETCH_FAILED__"; exit 0; fi; sh "$FETCH"; check_rc=$?; rm -f "$FETCH"; echo "__SMAIOC_EXIT=$check_rc"; exit 0'
+$remoteCommand = 'BASE_URL="https://raw.githubusercontent.com/garrettoh/Vuln_Mgmt_Scripts/main"; FETCH=/tmp/IOC_CVE-2026-102255-8.sh; OUT=/tmp/SMA1000-IOC-run.$$.out; if ! curl -kfsSL "$BASE_URL/IOC_CVE-2026-102255-8.sh" -o "$FETCH"; then echo "__SMAIOC_FETCH_FAILED__"; exit 0; fi; sh "$FETCH" > "$OUT" 2>&1; check_rc=$?; cat "$OUT"; result_dir=$(sed -n "s/^Results directory:[[:space:]]*//p" "$OUT" | tail -n 1); if [ -n "$result_dir" ] && [ -f "$result_dir/results.txt" ]; then echo "__SMAIOC_REPORT_BEGIN__"; cat "$result_dir/results.txt"; echo "__SMAIOC_REPORT_END__"; fi; rm -f "$FETCH" "$OUT"; echo "__SMAIOC_EXIT=$check_rc"; exit 0'
 
 Write-LogLine "Connecting to $target over SSH. Authenticate when prompted."
 Write-LogLine "The SMA will run the aggregate check; curl -k is used as requested."
@@ -94,23 +84,20 @@ if (-not $resultMatch.Success) {
     throw "Could not locate the remote report. See $logPath."
 }
 $remoteResultsDirectory = $resultMatch.Groups[1].Value
-$remoteReport = "$remoteResultsDirectory/results.txt"
 $localReport = Join-Path $logDirectory "SMA_Remote_Report.tmp"
+$reportMatch = [regex]::Match($sessionText, "(?s)__SMAIOC_REPORT_BEGIN__\r?\n(.*?)\r?\n__SMAIOC_REPORT_END__")
+if (-not $reportMatch.Success) {
+    Write-LogLine "ERROR: The aggregate report was not returned over SSH."
+    Write-LogLine "Session transcript: $sessionLogPath"
+    throw "Could not retrieve the remote report. See $logPath."
+}
+Set-Content -Path $localReport -Value $reportMatch.Groups[1].Value.TrimEnd("`r", "`n") -Encoding UTF8
 $checkExitCode = "unknown"
 if ($sessionText -match "__SMAIOC_EXIT=(\d+)") {
     $checkExitCode = $Matches[1]
 }
 
-Write-LogLine "Copying $remoteReport to $localReport over SCP."
-Start-Transcript -Path $sessionLogPath -Append | Out-Null
-& $pscpPath -scp "${target}:$remoteReport" $localReport
-$scpExitCode = $LASTEXITCODE
-Stop-Transcript | Out-Null
-if ($scpExitCode -ne 0 -or -not (Test-Path -LiteralPath $localReport)) {
-    Write-LogLine "ERROR: SCP could not copy the remote report (exit $scpExitCode)."
-    Write-LogLine "Session transcript: $sessionLogPath"
-    throw "Report copy failed. See $logPath."
-}
+Write-LogLine "Retrieved aggregate report over the Plink SSH session."
 
 Write-LogLine ""
 Write-LogLine "========== SMA aggregate report =========="
