@@ -23,10 +23,87 @@ if (-not $SshUser) {
     $SshUser = Read-Host "SSH username"
 }
 
-$sshCommand = Get-Command ssh.exe -ErrorAction SilentlyContinue
-$scpCommand = Get-Command scp.exe -ErrorAction SilentlyContinue
-if (-not $sshCommand -or -not $scpCommand) {
-    throw "Windows OpenSSH client tools ssh.exe and scp.exe are required."
+$sshPath = (Get-Command ssh.exe -ErrorAction SilentlyContinue).Source
+$scpPath = (Get-Command scp.exe -ErrorAction SilentlyContinue).Source
+$plinkPath = (Get-Command plink.exe -ErrorAction SilentlyContinue).Source
+$pscpPath = (Get-Command pscp.exe -ErrorAction SilentlyContinue).Source
+
+if (-not $sshPath -and $env:WINDIR) {
+    $candidate = Join-Path $env:WINDIR "System32\OpenSSH\ssh.exe"
+    if (Test-Path -LiteralPath $candidate) { $sshPath = $candidate }
+}
+if (-not $scpPath -and $env:WINDIR) {
+    $candidate = Join-Path $env:WINDIR "System32\OpenSSH\scp.exe"
+    if (Test-Path -LiteralPath $candidate) { $scpPath = $candidate }
+}
+
+$puttyDirectories = @()
+if ($env:ProgramFiles) { $puttyDirectories += (Join-Path $env:ProgramFiles "PuTTY") }
+if (${env:ProgramFiles(x86)}) { $puttyDirectories += (Join-Path ${env:ProgramFiles(x86)} "PuTTY") }
+foreach ($directory in $puttyDirectories) {
+    if (-not $plinkPath) {
+        $candidate = Join-Path $directory "plink.exe"
+        if (Test-Path -LiteralPath $candidate) { $plinkPath = $candidate }
+    }
+    if (-not $pscpPath) {
+        $candidate = Join-Path $directory "pscp.exe"
+        if (Test-Path -LiteralPath $candidate) { $pscpPath = $candidate }
+    }
+}
+
+$useOpenSsh = [bool]($sshPath -and $scpPath)
+$usePuTTY = [bool]($plinkPath -and $pscpPath)
+if (-not $useOpenSsh -and -not $usePuTTY) {
+    Write-Host "No complete SSH/SCP client pair was found. The collector needs either Windows OpenSSH Client or PuTTY command-line tools."
+    Write-Host "Windows OpenSSH installation requires an elevated PowerShell session. PuTTY installation uses winget, if available."
+    $installChoice = Read-Host "Install Windows OpenSSH Client (O), install PuTTY with winget (P), or quit (Q)"
+    switch ($installChoice.Trim().ToUpperInvariant()) {
+        "O" {
+            $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+            $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+            if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+                throw "OpenSSH installation needs administrator rights. Reopen PowerShell as Administrator and rerun this collector."
+            }
+            Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0 -ErrorAction Stop | Out-Host
+        }
+        "P" {
+            $winget = Get-Command winget.exe -ErrorAction SilentlyContinue
+            if (-not $winget) { throw "winget was not found. Install Windows OpenSSH Client from Windows Settings > Optional features, or install PuTTY including Plink and PSCP, then rerun this collector." }
+            & $winget.Source install --id PuTTY.PuTTY --exact --accept-source-agreements --accept-package-agreements
+            if ($LASTEXITCODE -ne 0) { throw "winget could not install PuTTY (exit $LASTEXITCODE). Install PuTTY manually, then rerun this collector." }
+        }
+        "Q" { throw "Collector cancelled; no SSH client was installed." }
+        default { throw "Choose O, P, or Q, then rerun the collector." }
+    }
+
+    # Refresh command discovery after the selected installer completes.
+    $sshPath = (Get-Command ssh.exe -ErrorAction SilentlyContinue).Source
+    $scpPath = (Get-Command scp.exe -ErrorAction SilentlyContinue).Source
+    $plinkPath = (Get-Command plink.exe -ErrorAction SilentlyContinue).Source
+    $pscpPath = (Get-Command pscp.exe -ErrorAction SilentlyContinue).Source
+    if (-not $sshPath -and $env:WINDIR) {
+        $candidate = Join-Path $env:WINDIR "System32\OpenSSH\ssh.exe"
+        if (Test-Path -LiteralPath $candidate) { $sshPath = $candidate }
+    }
+    if (-not $scpPath -and $env:WINDIR) {
+        $candidate = Join-Path $env:WINDIR "System32\OpenSSH\scp.exe"
+        if (Test-Path -LiteralPath $candidate) { $scpPath = $candidate }
+    }
+    foreach ($directory in $puttyDirectories) {
+        if (-not $plinkPath) {
+            $candidate = Join-Path $directory "plink.exe"
+            if (Test-Path -LiteralPath $candidate) { $plinkPath = $candidate }
+        }
+        if (-not $pscpPath) {
+            $candidate = Join-Path $directory "pscp.exe"
+            if (Test-Path -LiteralPath $candidate) { $pscpPath = $candidate }
+        }
+    }
+    $useOpenSsh = [bool]($sshPath -and $scpPath)
+    $usePuTTY = [bool]($plinkPath -and $pscpPath)
+    if (-not $useOpenSsh -and -not $usePuTTY) {
+        throw "Installation completed, but the SSH/SCP tools are not visible yet. Restart PowerShell and rerun the collector."
+    }
 }
 
 New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
@@ -38,7 +115,14 @@ $remoteCommand = 'BASE_URL="https://raw.githubusercontent.com/garrettoh/Vuln_Mgm
 
 Write-LogLine "Connecting to $target over SSH. Authenticate when prompted."
 Write-LogLine "The SMA will run the aggregate check; curl -k is used as requested."
-& $sshCommand.Source -T $target $remoteCommand 2>&1 | Tee-Object -FilePath $sessionLogPath -Append | Tee-Object -FilePath $logPath -Append
+if ($useOpenSsh) {
+    Write-LogLine "Using Windows OpenSSH."
+    & $sshPath -T $target $remoteCommand 2>&1 | Tee-Object -FilePath $sessionLogPath -Append | Tee-Object -FilePath $logPath -Append
+}
+else {
+    Write-LogLine "Using PuTTY Plink."
+    & $plinkPath -ssh -T -l $SshUser $SmaHost $remoteCommand 2>&1 | Tee-Object -FilePath $sessionLogPath -Append | Tee-Object -FilePath $logPath -Append
+}
 $sshExitCode = $LASTEXITCODE
 
 $sessionText = Get-Content -Path $sessionLogPath -Raw
@@ -63,7 +147,12 @@ if ($sessionText -match "__SMAIOC_EXIT=(\d+)") {
 }
 
 Write-LogLine "Copying $remoteReport to $localReport over SCP."
-& $scpCommand.Source -q "${target}:$remoteReport" $localReport 2>&1 | Tee-Object -FilePath $logPath -Append
+if ($useOpenSsh) {
+    & $scpPath -q "${target}:$remoteReport" $localReport 2>&1 | Tee-Object -FilePath $logPath -Append
+}
+else {
+    & $pscpPath -q -scp "${target}:$remoteReport" $localReport 2>&1 | Tee-Object -FilePath $logPath -Append
+}
 $scpExitCode = $LASTEXITCODE
 if ($scpExitCode -ne 0 -or -not (Test-Path -LiteralPath $localReport)) {
     Write-LogLine "ERROR: SCP could not copy the remote report (exit $scpExitCode)."
