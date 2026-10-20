@@ -82,12 +82,16 @@ if ($resultMatch.Success) { $remoteResultsDirectory = $resultMatch.Groups[1].Val
 else { $remoteResultsDirectory = "See $sessionLogPath" }
 $localReport = Join-Path $logDirectory "SMA_Remote_Report.tmp"
 $reportMatch = [regex]::Match($sessionText, "(?s)__SMAIOC_REPORT_BEGIN__[\r\n ]*(.*?)\s*__SMAIOC_REPORT_END__")
-if (-not $reportMatch.Success) {
-    Write-LogLine "ERROR: The aggregate report was not returned over SSH."
-    Write-LogLine "Session transcript: $sessionLogPath"
-    throw "Could not retrieve the remote report. See $logPath."
+if ($reportMatch.Success) {
+    $reportContent = $reportMatch.Groups[1].Value.TrimEnd("`r", "`n")
 }
-Set-Content -Path $localReport -Value $reportMatch.Groups[1].Value.TrimEnd("`r", "`n") -Encoding UTF8
+else {
+    # PowerShell transcription can alter or omit boundary lines for native output.
+    # Preserve the captured SSH session instead of discarding a completed scan.
+    Write-LogLine "WARNING: Report boundary markers were incomplete; saving the full SSH transcript as the report."
+    $reportContent = $sessionText
+}
+Set-Content -Path $localReport -Value $reportContent -Encoding UTF8
 $checkExitCode = "unknown"
 if ($sessionText -match "__SMAIOC_EXIT=(\d+)") {
     $checkExitCode = $Matches[1]
