@@ -60,7 +60,7 @@ Set-Content -Path $logPath -Value "SMA 1000 IOC collection started: $(Get-Date -
 Set-Content -Path $sessionLogPath -Value "SSH collection session for $SshUser@$SmaHost"
 
 $target = "$SshUser@$SmaHost"
-$remoteCommand = 'BASE_URL="https://raw.githubusercontent.com/garrettoh/Vuln_Mgmt_Scripts/main"; FETCH=/tmp/IOC_CVE-2026-102255-8.sh; OUT=/tmp/SMA1000-IOC-run.$$.out; if ! curl -kfsSL "$BASE_URL/IOC_CVE-2026-102255-8.sh" -o "$FETCH"; then echo "__SMAIOC_FETCH_FAILED__"; exit 0; fi; sh "$FETCH" > "$OUT" 2>&1; check_rc=$?; cat "$OUT"; result_dir=$(sed -n "s/^Results directory:[[:space:]]*//p" "$OUT" | tail -n 1); if [ -n "$result_dir" ] && [ -f "$result_dir/results.txt" ]; then echo "__SMAIOC_REPORT_BEGIN__"; cat "$result_dir/results.txt"; echo "__SMAIOC_REPORT_END__"; fi; rm -f "$FETCH" "$OUT"; echo "__SMAIOC_EXIT=$check_rc"; exit 0'
+$remoteCommand = 'BASE_URL="https://raw.githubusercontent.com/garrettoh/Vuln_Mgmt_Scripts/main"; FETCH=/tmp/IOC_CVE-2026-102255-8.sh; OUT=/tmp/SMA1000-IOC-run.$$.out; if ! curl -kfsSL "$BASE_URL/IOC_CVE-2026-102255-8.sh" -o "$FETCH"; then echo "__SMAIOC_FETCH_FAILED__"; exit 0; fi; sh "$FETCH" > "$OUT" 2>&1; check_rc=$?; echo "__SMAIOC_REPORT_BEGIN__"; cat "$OUT"; echo "__SMAIOC_REPORT_END__"; rm -f "$FETCH" "$OUT"; echo "__SMAIOC_EXIT=$check_rc"; exit 0'
 
 Write-LogLine "Connecting to $target over SSH. Authenticate when prompted."
 Write-LogLine "The SMA will run the aggregate check; curl -k is used as requested."
@@ -77,15 +77,11 @@ if ($sessionText -match "__SMAIOC_FETCH_FAILED__") {
     throw "Remote script download failed. See $logPath."
 }
 
-$resultMatch = [regex]::Match($sessionText, "(?m)^Results directory:\s*(/tmp/\S+)\s*$")
-if (-not $resultMatch.Success) {
-    Write-LogLine "ERROR: The aggregate check did not report a results directory (SSH exit $sshExitCode)."
-    Write-LogLine "Session transcript: $sessionLogPath"
-    throw "Could not locate the remote report. See $logPath."
-}
-$remoteResultsDirectory = $resultMatch.Groups[1].Value
+$resultMatch = [regex]::Match($sessionText, "Results directory:\s*(/tmp/\S+)")
+if ($resultMatch.Success) { $remoteResultsDirectory = $resultMatch.Groups[1].Value }
+else { $remoteResultsDirectory = "See $sessionLogPath" }
 $localReport = Join-Path $logDirectory "SMA_Remote_Report.tmp"
-$reportMatch = [regex]::Match($sessionText, "(?s)__SMAIOC_REPORT_BEGIN__\r?\n(.*?)\r?\n__SMAIOC_REPORT_END__")
+$reportMatch = [regex]::Match($sessionText, "(?s)__SMAIOC_REPORT_BEGIN__[\r\n ]*(.*?)\s*__SMAIOC_REPORT_END__")
 if (-not $reportMatch.Success) {
     Write-LogLine "ERROR: The aggregate report was not returned over SSH."
     Write-LogLine "Session transcript: $sessionLogPath"
