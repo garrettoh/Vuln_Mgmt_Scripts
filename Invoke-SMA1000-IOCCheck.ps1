@@ -4,7 +4,6 @@ param(
     [string]$SshUser = "root"
 )
 
-$ErrorActionPreference = "Stop"
 $logDirectory = "C:\temp"
 $logPath = Join-Path $logDirectory "SMA_Log.log"
 $sessionLogPath = Join-Path $logDirectory "SMA_Collection_Session.log"
