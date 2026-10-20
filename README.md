@@ -37,3 +37,15 @@ export BASE_URL="https://raw.githubusercontent.com/garrettoh/Vuln_Mgmt_Scripts/m
 The aggregate runner downloads each individual script from `BASE_URL` with `curl -k`, prints each output and a summary to the SSH terminal, and saves the combined transcript under `/tmp/SMA1000-IOC-results.*/results.txt`. The individual result files are also retained. It exits 0 (no heuristic leads), 1 (at least one CVE had leads), or 2 (one or more checks failed). Set `BASE_URL` to a trusted pinned URL for repeatable operational use. `-k` disables TLS certificate verification to work around the SMA CA error; use it only on a trusted connection.
 
 Exit status for an individual script: 0 means no heuristic match, 1 means review leads found, and 2 means not run as root. Output clarifies that no matches does not establish the appliance is clean.
+
+## Collect the full check from Windows PowerShell
+
+`Invoke-SMA1000-IOCCheck.ps1` uses Windows OpenSSH to connect to the SMA, run the aggregate check, and copy its report back over SCP. It writes the combined report and SSH transcript to `C:\temp\SMA_Log.log` and `C:\temp\SMA_Collection_Session.log`. It does not store an SSH password; OpenSSH handles authentication interactively, so authentication may be requested for both SSH and SCP. SSH key authentication avoids repeated prompts.
+
+From the repository folder, run:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Invoke-SMA1000-IOCCheck.ps1 -SmaHost 192.0.2.10 -SshUser root
+```
+
+Replace the example host with the SMA's address. The script leaves the PowerShell session open and prints the local report path when collection finishes. The remote aggregate script uses `curl -k` for the SMA's reported CA verification error.
